@@ -1,0 +1,2 @@
+CODEOWNERS = ["@gytisrepecka"]
+DEPENDENCIES = ["display"]
