@@ -1,0 +1,892 @@
+# This example demonstrates how to use custom components
+# and LVGL to build a full weather dashboard with OpenWeatherMap
+# on the CrowPanel 5.79" E-Paper display.
+
+substitutions:
+  owm_api_key: !secret owm_api_key
+  owm_lat: !secret owm_lat
+  owm_lon: !secret owm_lon
+
+esphome:
+  name: crowpanel_epaper
+  friendly_name: "CrowPanel 5.79 E-Paper"
+  on_boot:
+    - priority: 600
+      then:
+        - switch.turn_on: epd_power
+        - delay: 500ms
+    # Fetch weather after WiFi is connected
+    - priority: -10
+      then:
+        - delay: 5s
+        - script.execute: fetch_weather
+
+external_components:
+  - source: components
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+  hardware_uart: UART0
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "CrowPanel Fallback"
+    password: "crowpanel123"
+
+captive_portal:
+
+http_request:
+  id: http_client
+  timeout: 10s
+
+# --- Globals for OWM weather data ---
+globals:
+  - id: cur_temp
+    type: float
+    initial_value: "0"
+  - id: cur_code
+    type: int
+    initial_value: "0"
+  - id: cur_humidity
+    type: int
+    initial_value: "0"
+  - id: cur_wind
+    type: float
+    initial_value: "0"
+  - id: cur_is_night
+    type: bool
+    initial_value: "false"
+  - id: fc_temps
+    type: float[6]
+    initial_value: "{0,0,0,0,0,0}"
+  - id: fc_codes
+    type: int[6]
+    initial_value: "{0,0,0,0,0,0}"
+  - id: fc_pops
+    type: int[6]
+    initial_value: "{0,0,0,0,0,0}"
+  - id: fc_hours
+    type: int[6]
+    initial_value: "{0,0,0,0,0,0}"
+  - id: weather_valid
+    type: bool
+    initial_value: "false"
+  - id: last_update_hour
+    type: int
+    initial_value: "-1"
+  - id: last_update_min
+    type: int
+    initial_value: "-1"
+
+# --- Hardware ---
+switch:
+  - platform: gpio
+    pin: 7
+    id: epd_power
+    name: "E-Paper Power"
+    restore_mode: ALWAYS_ON
+    internal: true
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: 2
+      mode: INPUT_PULLUP
+      inverted: true
+    id: btn_menu
+    name: "Menu Button"
+    on_press:
+      then:
+        - lvgl.page.next:
+    on_click:
+      min_length: 1000ms
+      max_length: 5000ms
+      then:
+        - logger.log: "Long press: full display refresh"
+        - lambda: 'id(epd).force_full_update();'
+        - component.update: epd
+  - platform: gpio
+    pin:
+      number: 1
+      mode: INPUT_PULLUP
+      inverted: true
+    id: btn_back
+    name: "Back Button"
+    on_press:
+      then:
+        - lvgl.page.previous:
+  - platform: gpio
+    pin:
+      number: 5
+      mode: INPUT_PULLUP
+      inverted: true
+    id: btn_confirm
+    name: "Rotary Confirm"
+    on_press:
+      then:
+        - logger.log: "Manual weather refresh"
+        - script.execute: fetch_weather
+
+sensor:
+  - platform: rotary_encoder
+    id: knob
+    name: "Rotary Encoder"
+    pin_a:
+      number: 6
+      mode: INPUT_PULLUP
+    pin_b:
+      number: 4
+      mode: INPUT_PULLUP
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_rssi
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sensor
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: ip_addr
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Brussels"
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 3
+        then:
+          - lambda: 'id(epd).force_full_update();'
+          - component.update: epd
+
+# --- Fonts: all 1-bit for crisp e-paper ---
+font:
+  - file: "gfonts://Roboto"
+    id: font_title
+    size: 22
+    bpp: 1
+  - file: "gfonts://Roboto"
+    id: font_body
+    size: 18
+    bpp: 1
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
+    bpp: 1
+  - file: "gfonts://Roboto@700"
+    id: font_temp_big
+    size: 72
+    bpp: 1
+    glyphs: "0123456789.-:° "
+  - file: "gfonts://Roboto@700"
+    id: font_temp_sm
+    size: 22
+    bpp: 1
+    glyphs: "0123456789.-° "
+  - file: "gfonts://Roboto"
+    id: font_time_sm
+    size: 14
+    bpp: 1
+    glyphs: "0123456789: "
+  # Big weather icon (current conditions)
+  - file:
+      type: web
+      url: "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: icon_big
+    size: 56
+    bpp: 1
+    glyphs:
+      - "\U000F0599"  # sunny
+      - "\U000F0594"  # night
+      - "\U000F0590"  # cloudy
+      - "\U000F0595"  # partly
+      - "\U000F0596"  # pouring
+      - "\U000F0597"  # rainy
+      - "\U000F0598"  # snowy
+      - "\U000F0591"  # fog
+      - "\U000F0593"  # lightning
+      - "\U000F067E"  # lightning_rain
+      - "\U000F0592"  # hail
+      - "\U000F059D"  # windy
+      - "\U000F067F"  # snowy_rainy
+  # Small weather icons (forecast timeline)
+  - file:
+      type: web
+      url: "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: icon_sm
+    size: 28
+    bpp: 1
+    glyphs:
+      - "\U000F0599"  # sunny
+      - "\U000F0594"  # night
+      - "\U000F0590"  # cloudy
+      - "\U000F0595"  # partly
+      - "\U000F0596"  # pouring
+      - "\U000F0597"  # rainy
+      - "\U000F0598"  # snowy
+      - "\U000F0591"  # fog
+      - "\U000F0593"  # lightning
+      - "\U000F067E"  # lightning_rain
+      - "\U000F0592"  # hail
+      - "\U000F059D"  # windy
+      - "\U000F067F"  # snowy_rainy
+
+# --- E-Paper display ---
+display:
+  - platform: crowpanel_epaper
+    id: epd
+    model: "5.79in"
+    cs_pin: 45
+    dc_pin: 46
+    reset_pin: 47
+    busy_pin: 48
+    clk_pin: 12
+    mosi_pin: 11
+    rotation: 0
+    full_update_every: 9999
+    invert_colors: true
+    auto_clear_enabled: false
+    update_interval: never
+
+# --- LVGL UI ---
+lvgl:
+  displays: epd
+  buffer_size: 25%
+  color_depth: 16
+
+  encoders:
+    - sensor: knob
+      enter_button: btn_confirm
+      group: ui_group
+
+  on_draw_end:
+    component.update: epd
+
+  pages:
+    # ===== PAGE 1: Weather Dashboard =====
+    - id: page_weather
+      bg_color: 0xFFFFFF
+      scrollbar_mode: "OFF"
+      widgets:
+        # ---- TOP BAR ----
+        - obj:
+            x: 0
+            y: 0
+            width: 792
+            height: 38
+            bg_color: 0x000000
+            bg_opa: COVER
+            pad_left: 12
+            pad_right: 12
+            scrollbar_mode: "OFF"
+            widgets:
+              - label:
+                  align: LEFT_MID
+                  text_color: 0xFFFFFF
+                  text_font: font_title
+                  id: lbl_topbar_left
+                  text: "Brussels"
+              - label:
+                  align: RIGHT_MID
+                  text_color: 0xFFFFFF
+                  text_font: font_body
+                  id: lbl_topbar_time
+                  text: "--:--"
+
+        # ---- LEFT: Current weather ----
+        - obj:
+            x: 0
+            y: 40
+            width: 220
+            height: 232
+            bg_color: 0xFFFFFF
+            bg_opa: COVER
+            border_width: 0
+            pad_top: 8
+            scrollbar_mode: "OFF"
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: START
+              flex_align_cross: CENTER
+              pad_row: 2
+            widgets:
+              - label:
+                  id: lbl_cur_icon
+                  text_font: icon_big
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_cur_temp
+                  text_font: font_temp_big
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_cur_detail
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "-- km/h  --%"
+
+        # ---- VERTICAL DIVIDER ----
+        - obj:
+            x: 222
+            y: 48
+            width: 2
+            height: 210
+            bg_color: 0x000000
+            bg_opa: COVER
+
+        # ---- RIGHT: Forecast Timeline (6 slots) ----
+        # Slot 0
+        - obj:
+            x: 228
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_0
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_0
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_0
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_0
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+        # Slot 1
+        - obj:
+            x: 322
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_1
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_1
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_1
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_1
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+        # Slot 2
+        - obj:
+            x: 416
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_2
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_2
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_2
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_2
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+        # Slot 3
+        - obj:
+            x: 510
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_3
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_3
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_3
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_3
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+        # Slot 4
+        - obj:
+            x: 604
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_4
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_4
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_4
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_4
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+        # Slot 5
+        - obj:
+            x: 698
+            y: 46
+            width: 92
+            height: 220
+            bg_opa: TRANSP
+            border_width: 0
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              pad_row: 4
+            widgets:
+              - label:
+                  id: lbl_fc_time_5
+                  text_font: font_time_sm
+                  text_color: 0x000000
+                  text: "--:--"
+              - label:
+                  id: lbl_fc_icon_5
+                  text_font: icon_sm
+                  text_color: 0x000000
+                  text: "\U000F0590"
+              - label:
+                  id: lbl_fc_temp_5
+                  text_font: font_temp_sm
+                  text_color: 0x000000
+                  text: "--°"
+              - label:
+                  id: lbl_fc_pop_5
+                  text_font: font_small
+                  text_color: 0x000000
+                  text: "--%"
+
+        # ---- BOTTOM-RIGHT: last updated ----
+        - label:
+            id: lbl_last_update
+            text_font: font_small
+            text_color: 0x000000
+            x: 660
+            y: 258
+            text: ""
+
+    # ===== PAGE 2: Clock =====
+    - id: page_clock
+      bg_color: 0xFFFFFF
+      scrollbar_mode: "OFF"
+      widgets:
+        - label:
+            align: CENTER
+            y: -20
+            id: lbl_clock_big
+            text_font: font_temp_big
+            text_color: 0x000000
+            text: "--:--"
+        - label:
+            align: BOTTOM_MID
+            y: -10
+            text_font: font_small
+            text_color: 0x000000
+            text: "MENU/BACK: pages | PRESS: refresh"
+            group: ui_group
+
+# =====================================================================
+# Intervals: weather fetch + UI update
+# =====================================================================
+# --- Script to fetch weather (reusable) ---
+script:
+  - id: fetch_weather
+    then:
+      - http_request.get:
+          url: !lambda |-
+            return "http://api.openweathermap.org/data/2.5/weather?lat=" + std::string("${owm_lat}") + "&lon=" + std::string("${owm_lon}") + "&appid=" + std::string("${owm_api_key}") + "&units=metric";
+          capture_response: true
+          max_response_buffer_size: 2048
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200) {
+                    json::parse_json(body, [](JsonObject root) -> bool {
+                      id(cur_temp) = root["main"]["temp"].as<float>();
+                      id(cur_humidity) = root["main"]["humidity"].as<int>();
+                      id(cur_wind) = root["wind"]["speed"].as<float>() * 3.6f;
+                      id(cur_code) = root["weather"][0]["id"].as<int>();
+                      std::string ico = root["weather"][0]["icon"].as<std::string>();
+                      id(cur_is_night) = (ico.find('n') != std::string::npos);
+                      id(weather_valid) = true;
+                      auto t = id(sntp_time).now();
+                      if (t.is_valid()) { id(last_update_hour) = t.hour; id(last_update_min) = t.minute; }
+                      ESP_LOGI("owm", "Current: %.1fC code=%d hum=%d wind=%.0f",
+                               id(cur_temp), id(cur_code), id(cur_humidity), id(cur_wind));
+                      return true;
+                    });
+                  } else {
+                    ESP_LOGW("owm", "Current weather HTTP %d", response->status_code);
+                  }
+      - delay: 2s
+      - http_request.get:
+          url: !lambda |-
+            return "http://api.openweathermap.org/data/2.5/forecast?lat=" + std::string("${owm_lat}") + "&lon=" + std::string("${owm_lon}") + "&appid=" + std::string("${owm_api_key}") + "&units=metric&cnt=6";
+          capture_response: true
+          max_response_buffer_size: 8192
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200) {
+                    json::parse_json(body, [](JsonObject root) -> bool {
+                      auto list = root["list"];
+                      for (int i = 0; i < 6; i++) {
+                        id(fc_temps)[i] = list[i]["main"]["temp"].as<float>();
+                        id(fc_codes)[i] = list[i]["weather"][0]["id"].as<int>();
+                        id(fc_pops)[i] = (int)(list[i]["pop"].as<float>() * 100.0f);
+                        time_t ts = list[i]["dt"].as<long>();
+                        struct tm *tm_info = localtime(&ts);
+                        id(fc_hours)[i] = tm_info->tm_hour;
+                      }
+                      ESP_LOGI("owm", "Forecast loaded: +3h=%.0f +6h=%.0f +9h=%.0f",
+                               id(fc_temps)[0], id(fc_temps)[1], id(fc_temps)[2]);
+                      return true;
+                    });
+                  } else {
+                    ESP_LOGW("owm", "Forecast HTTP %d", response->status_code);
+                  }
+
+interval:
+  # ---- Fetch weather every 2 min (debug, change to 10min for prod) ----
+  - interval: 2min
+    then:
+      - script.execute: fetch_weather
+
+  # ---- Update LVGL every 10s ----
+  - interval: 10s
+    then:
+      - lvgl.label.update:
+          id: lbl_topbar_time
+          text: !lambda |-
+            auto t = id(sntp_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", t.hour, t.minute);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_clock_big
+          text: !lambda |-
+            auto t = id(sntp_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%02d:%02d", t.hour, t.minute);
+            return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_cur_icon
+          text: !lambda |-
+            int c = id(cur_code);
+            bool night = id(cur_is_night);
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return night ? std::string("\U000F0594") : std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_cur_temp
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%.0f°", id(cur_temp));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_cur_detail
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("-- km/h  --%");
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.0f km/h  %d%%", id(cur_wind), id(cur_humidity));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_last_update
+          text: !lambda |-
+            if (id(last_update_hour) < 0) return std::string("");
+            char buf[16];
+            snprintf(buf, sizeof(buf), "updated %02d:%02d", id(last_update_hour), id(last_update_min));
+            return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_0
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[0]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_0
+          text: !lambda |-
+            int c = id(fc_codes)[0];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_0
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[0]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_0
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[0]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_1
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[1]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_1
+          text: !lambda |-
+            int c = id(fc_codes)[1];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_1
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[1]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_1
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[1]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_2
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[2]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_2
+          text: !lambda |-
+            int c = id(fc_codes)[2];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_2
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[2]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_2
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[2]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_3
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[3]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_3
+          text: !lambda |-
+            int c = id(fc_codes)[3];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_3
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[3]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_3
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[3]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_4
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[4]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_4
+          text: !lambda |-
+            int c = id(fc_codes)[4];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_4
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[4]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_4
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[4]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_time_5
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--:--");
+            char buf[8]; snprintf(buf, sizeof(buf), "%02d:00", id(fc_hours)[5]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_icon_5
+          text: !lambda |-
+            int c = id(fc_codes)[5];
+            if (c >= 200 && c < 300) return std::string("\U000F0593");
+            if (c >= 300 && c < 400) return std::string("\U000F0597");
+            if (c >= 500 && c < 520) return std::string("\U000F0597");
+            if (c >= 520 && c < 600) return std::string("\U000F0596");
+            if (c >= 600 && c < 700) return std::string("\U000F0598");
+            if (c >= 700 && c < 800) return std::string("\U000F0591");
+            if (c == 800) return std::string("\U000F0599");
+            if (c == 801 || c == 802) return std::string("\U000F0595");
+            return std::string("\U000F0590");
+      - lvgl.label.update:
+          id: lbl_fc_temp_5
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--°");
+            char buf[8]; snprintf(buf, sizeof(buf), "%.0f°", id(fc_temps)[5]); return std::string(buf);
+      - lvgl.label.update:
+          id: lbl_fc_pop_5
+          text: !lambda |-
+            if (!id(weather_valid)) return std::string("--%");
+            char buf[8]; snprintf(buf, sizeof(buf), "%d%%", id(fc_pops)[5]); return std::string(buf);
