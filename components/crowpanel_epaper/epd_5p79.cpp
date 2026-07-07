@@ -55,6 +55,50 @@ void CrowPanelEPaper5P79In::prepare_update_() {
   spi_data_(0x00);
   spi_data_(0x00);
 
+  // On a full refresh, seed OLD RAM (0x26) on BOTH cascade chips with the
+  // current frame so the first following partial refresh diffs against a valid
+  // baseline instead of undefined RAM. Without this, the first partial after a
+  // full update overlays garbage (page-overlay ghosting). Adapted from
+  // ESPBoards PR #1 (single-controller 4.2") to the dual-controller cascade:
+  // two 0x26 writes with the same byte partition as send_data_(), then both
+  // cursors re-armed to their scan origins (primary X=0x00, secondary X=0x31).
+  if (is_full_update_) {
+    // Primary OLD RAM - left half (bytes 0..HALF_CEIL-1)
+    spi_command_(CMD_WRITE_RAM_OLD | TGT_PRIMARY);
+    spi_start_data_();
+    for (uint16_t row = 0; row < HEIGHT_5P79; row++) {
+      size_t off = (size_t) row * ROW_BYTES;
+      for (uint16_t x = 0; x < HALF_CEIL; x++)
+        spi_write_byte_(buffer_[off + x]);
+    }
+    spi_end_data_();
+
+    delay(1);
+
+    // Secondary OLD RAM - right half (bytes HALF_FLOOR..HALF_FLOOR+HALF_CEIL-1)
+    spi_command_(CMD_WRITE_RAM_OLD | TGT_SECONDARY);
+    spi_start_data_();
+    for (uint16_t row = 0; row < HEIGHT_5P79; row++) {
+      size_t off = (size_t) row * ROW_BYTES;
+      for (uint16_t x = 0; x < HALF_CEIL; x++)
+        spi_write_byte_(buffer_[off + HALF_FLOOR + x]);
+    }
+    spi_end_data_();
+
+    // Re-arm both cursors to their scan origins (the OLD-RAM writes advanced
+    // the shared address counter of each chip).
+    spi_command_(CMD_SET_X_CTR | TGT_PRIMARY);
+    spi_data_(0x00);
+    spi_command_(CMD_SET_Y_CTR | TGT_PRIMARY);
+    spi_data_(0x00);
+    spi_data_(0x00);
+    spi_command_(CMD_SET_X_CTR | TGT_SECONDARY);
+    spi_data_(0x31);
+    spi_command_(CMD_SET_Y_CTR | TGT_SECONDARY);
+    spi_data_(0x00);
+    spi_data_(0x00);
+  }
+
   // Open primary RAM for writing
   spi_command_(CMD_WRITE_RAM | TGT_PRIMARY);
   spi_start_data_();

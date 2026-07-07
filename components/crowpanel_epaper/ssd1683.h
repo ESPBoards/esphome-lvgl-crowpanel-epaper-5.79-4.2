@@ -15,6 +15,7 @@ constexpr uint8_t CMD_DISPLAY_UPDATE   = 0x20;
 constexpr uint8_t CMD_UPDATE_CTRL1     = 0x21;
 constexpr uint8_t CMD_UPDATE_SEQ       = 0x22;
 constexpr uint8_t CMD_WRITE_RAM        = 0x24;
+constexpr uint8_t CMD_WRITE_RAM_OLD    = 0x26;
 constexpr uint8_t CMD_BORDER_WAVEFORM  = 0x3C;
 constexpr uint8_t CMD_SET_X_ADDR       = 0x44;
 constexpr uint8_t CMD_SET_Y_ADDR       = 0x45;
