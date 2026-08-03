@@ -39,6 +39,22 @@ void CrowPanelEPaper4P2In::prepare_update_() {
   spi_data_(0x00);
   spi_data_(0x00);
 
+  // On full refresh, write buffer to OLD RAM (0x26) first so the controller
+  // has a valid baseline for subsequent partial refresh diffs.
+  if (is_full_update_) {
+    spi_command_(0x26);
+    spi_start_data_();
+    for (size_t i = 0; i < get_buffer_length_(); i++)
+      spi_write_byte_(buffer_[i]);
+    spi_end_data_();
+
+    spi_command_(CMD_SET_X_CTR);
+    spi_data_(0x00);
+    spi_command_(CMD_SET_Y_CTR);
+    spi_data_(0x00);
+    spi_data_(0x00);
+  }
+
   spi_command_(CMD_WRITE_RAM);
   spi_start_data_();
 }
