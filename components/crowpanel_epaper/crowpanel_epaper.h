@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "esphome/components/display/display_buffer.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -12,6 +14,13 @@ constexpr uint16_t WIDTH_4P2   = 400;
 constexpr uint16_t HEIGHT_4P2  = 300;
 constexpr uint16_t WIDTH_5P79  = 792;
 constexpr uint16_t HEIGHT_5P79 = 272;
+
+// Encoding for spi_send_sequence_(): {cmd, argc, args...}, terminated by a
+// {SEQ_END, SEQ_END} pair. Set DELAY_BIT in argc to delay instead of sending
+// arguments; the low bits then hold the delay in ms.
+constexpr uint8_t SEQ_END   = 0xFF;
+constexpr uint8_t DELAY_BIT = 0x80;
+constexpr uint8_t ARG_MASK  = 0x7F;
 
 enum class State : uint8_t {
   UNINIT,
@@ -76,6 +85,12 @@ class CrowPanelEPaper : public display::DisplayBuffer {
   virtual int native_width_() const = 0;
   virtual int native_height_() const = 0;
 
+  // Hook defaults encode SSD1683's conventions; other controllers override.
+  virtual bool busy_level_() const { return true; }   // pin level meaning "busy"
+  virtual bool mirror_x_() const { return true; }     // bit 7 = rightmost pixel
+  virtual const uint8_t *refresh_seq_(bool full) const;
+  virtual const uint8_t *sleep_seq_() const;
+
   // DisplayBuffer overrides
   uint32_t get_buffer_length_();
   int get_width_internal() override;
@@ -112,6 +127,33 @@ class CrowPanelEPaper4P2In : public CrowPanelEPaper {
   void send_data_() override;
   int native_width_() const override  { return WIDTH_4P2; }
   int native_height_() const override { return HEIGHT_4P2; }
+};
+
+// ---------------------------------------------------------------------------
+// 4.2" v1.2 — UC8276C (400x300)
+// ---------------------------------------------------------------------------
+class CrowPanelEPaper4P2InUC8276 : public CrowPanelEPaper {
+ protected:
+  void init_display_() override;
+  void prepare_update_() override;
+  void send_data_() override;
+  int native_width_() const override  { return WIDTH_4P2; }
+  int native_height_() const override { return HEIGHT_4P2; }
+
+  // UC8276C holds BUSY low while working, and takes pixels MSB-first from the
+  // left rather than the right.
+  bool busy_level_() const override { return false; }
+  bool mirror_x_() const override { return false; }
+  const uint8_t *refresh_seq_(bool full) const override;
+  const uint8_t *sleep_seq_() const override;
+
+  // Uploads one waveform table, zero-padded out to the register's full length.
+  void send_lut_(uint8_t cmd, const uint8_t *lut, size_t len, size_t total);
+
+  // Uploads a full set of five: true = GC (full refresh), false = DU (partial).
+  void send_lut_set_(bool full);
+
+  bool old_plane_primed_{false};
 };
 
 // ---------------------------------------------------------------------------

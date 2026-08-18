@@ -1,6 +1,14 @@
+# CrowPanel 4.2" e-paper, v1.0 board revision (SSD1683 controller).
+#
+# The SSD1683 supports partial refresh, so full_update_every controls how often
+# a full refresh runs to clear the ghosting that partial updates leave behind.
+#
+# On a v1.2 board use model: "4.20in-v1.2" instead - see the README for how to
+# tell the two revisions apart.
+
 esphome:
   name: crowpanel_epaper
-  friendly_name: "CrowPanel E-Paper"
+  friendly_name: "CrowPanel E-Paper 4.2\""
   on_boot:
     - priority: 600
       then:
@@ -8,7 +16,7 @@ esphome:
         - delay: 500ms
 
 external_components:
-  - source: components
+  - source: github://ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2@main
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -20,12 +28,14 @@ psram:
   speed: 80MHz
 
 logger:
+  level: DEBUG
+  hardware_uart: UART0
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
-# GPIO 7 powers the display — must be on before anything works
+# GPIO 7 powers the display - must be on before anything works
 switch:
   - platform: gpio
     pin: 7
@@ -36,15 +46,14 @@ switch:
 display:
   - platform: crowpanel_epaper
     id: epd
-    model: "5.79in"
+    model: "4.20in"
     clk_pin: 12
     mosi_pin: 11
     cs_pin: 45
     dc_pin: 46
     reset_pin: 47
     busy_pin: 48
-    invert_colors: true
-    full_update_every: 9999
+    full_update_every: 10
     auto_clear_enabled: false
     update_interval: never
 

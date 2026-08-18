@@ -38,10 +38,5 @@ constexpr uint8_t ENTRY_X_DEC_Y_INC   = 0x02;
 constexpr uint8_t CTRL1_SINGLE        = 0x00;
 constexpr uint8_t CTRL1_CASCADE       = 0x10;
 
-// Sequence encoding for spi_send_sequence_()
-constexpr uint8_t SEQ_END   = 0xFF;
-constexpr uint8_t DELAY_BIT = 0x80;
-constexpr uint8_t ARG_MASK  = 0x7F;
-
 }  // namespace crowpanel_epaper
 }  // namespace esphome
