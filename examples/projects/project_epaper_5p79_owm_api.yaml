@@ -22,7 +22,7 @@ esphome:
         - script.execute: fetch_weather
 
 external_components:
-  - source: ../../components
+  - source: github://ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2@main
 
 esp32:
   board: esp32-s3-devkitc-1
