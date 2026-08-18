@@ -1,0 +1,137 @@
+# Ghosting test rig, 5.79". See README.md.
+
+esphome:
+  name: ghost-test-5p79
+  friendly_name: "E-Paper Ghost Test 5.79"
+  on_boot:
+    - priority: 600
+      then:
+        - switch.turn_on: epd_power
+        - delay: 500ms
+
+external_components:
+  - source: ../../components
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+  hardware_uart: UART0
+
+switch:
+  - platform: gpio
+    pin: 7
+    id: epd_power
+
+globals:
+  - id: ghost_step
+    type: int
+    initial_value: '0'
+  - id: ghost_cycle
+    type: int
+    initial_value: '0'
+
+display:
+  - platform: crowpanel_epaper
+    id: epd
+    model: "5.79in"
+    clk_pin: 12
+    mosi_pin: 11
+    cs_pin: 45
+    dc_pin: 46
+    reset_pin: 47
+    busy_pin: 48
+    invert_colors: true
+    full_update_every: 11
+    auto_clear_enabled: false
+    update_interval: never
+
+interval:
+  - interval: 12s
+    then:
+      - lambda: |-
+          id(ghost_step) = (id(ghost_step) + 1) % 4;
+          if (id(ghost_step) == 0) id(ghost_cycle)++;
+      - logger.log:
+          format: "ghost test: cycle %d step %d"
+          args: ['id(ghost_cycle)', 'id(ghost_step)']
+      - if:
+          condition:
+            lambda: 'return id(ghost_step) == 0;'
+          then:
+            - lvgl.page.show: p_a
+      - if:
+          condition:
+            lambda: 'return id(ghost_step) == 1 || id(ghost_step) == 3;'
+          then:
+            - lvgl.page.show: p_white
+      - if:
+          condition:
+            lambda: 'return id(ghost_step) == 2;'
+          then:
+            - lvgl.page.show: p_b
+
+lvgl:
+  displays: epd
+  buffer_size: 25%
+  color_depth: 16
+  on_draw_end:
+    component.update: epd
+  pages:
+    - id: p_a
+      bg_color: 0xFFFFFF
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 10
+            text: "GHOST"
+            text_color: 0x000000
+            text_font: MONTSERRAT_48
+        - obj:
+            x: 40
+            y: 95
+            width: 300
+            height: 90
+            bg_color: 0x000000
+            bg_opa: COVER
+            border_width: 0
+        - label:
+            align: BOTTOM_MID
+            y: -10
+            text: "1234567890 ||||||||||||||||"
+            text_color: 0x000000
+            text_font: MONTSERRAT_28
+
+    - id: p_b
+      bg_color: 0xFFFFFF
+      widgets:
+        - label:
+            align: TOP_MID
+            y: 10
+            text: "PANEL"
+            text_color: 0x000000
+            text_font: MONTSERRAT_48
+        - obj:
+            x: 452
+            y: 95
+            width: 300
+            height: 90
+            bg_color: 0x000000
+            bg_opa: COVER
+            border_width: 0
+        - label:
+            align: BOTTOM_MID
+            y: -10
+            text: "ABCDEFGHIJ ================"
+            text_color: 0x000000
+            text_font: MONTSERRAT_28
+
+    - id: p_white
+      bg_color: 0xFFFFFF

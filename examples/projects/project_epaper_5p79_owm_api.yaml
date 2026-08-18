@@ -22,7 +22,7 @@ esphome:
         - script.execute: fetch_weather
 
 external_components:
-  - source: components
+  - source: ../../components
 
 esp32:
   board: esp32-s3-devkitc-1
