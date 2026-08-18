@@ -23,9 +23,10 @@ static const uint8_t SEQ_INIT[] = {
     SEQ_END, SEQ_END,
 };
 
-// Waveforms from Elecrow's green-sticker (v1.2) demo driver. Keep both sets
-// from the same source: DU assumes the state GC leaves behind. One 7-byte
-// phase group each, zero-padded to the register length on upload.
+// Waveforms from Elecrow's v1.2 demo driver (their "green circular sticker"
+// example tree). Keep both sets from the same source: DU assumes the state GC
+// leaves behind. One 7-byte phase group each, zero-padded to the register
+// length on upload.
 
 // GC - full refresh. WW==BW and WB==BB, so the outgoing pixel is irrelevant.
 static const uint8_t LUT_VCOM_FULL[] = {0x01, 0x14, 0x0A, 0x14, 0x00, 0x01, 0x01};

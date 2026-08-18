@@ -1,9 +1,11 @@
 #pragma once
 
 // UC8276C e-paper controller - command and parameter definitions.
-// Used by the "green sticker" / v1.2 CrowPanel 4.2" revision, which replaced
-// the SSD1683 of the original board. Commands follow the UC8276 datasheet;
-// the waveforms in epd_4p2_uc8276.cpp come from Elecrow's demo driver.
+// Used by the v1.2 CrowPanel 4.2" revision, which replaced the SSD1683 of the
+// original board. v1.2 is what the silkscreen prints next to the SKU - Elecrow
+// also calls it the "green sticker" board, but not every v1.2 ships with one.
+// Commands follow the UC8276 datasheet; the waveforms in epd_4p2_uc8276.cpp
+// come from Elecrow's demo driver.
 #include <cstddef>
 #include <cstdint>
 
