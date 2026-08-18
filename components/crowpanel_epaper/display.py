@@ -15,6 +15,7 @@ Base = ns.class_("CrowPanelEPaper", display.DisplayBuffer)
 
 MODELS = {
     "4.20in": ns.class_("CrowPanelEPaper4P2In", Base),
+    "4.20in-v1.2": ns.class_("CrowPanelEPaper4P2InUC8276", Base),
     "5.79in": ns.class_("CrowPanelEPaper5P79In", Base),
 }
 

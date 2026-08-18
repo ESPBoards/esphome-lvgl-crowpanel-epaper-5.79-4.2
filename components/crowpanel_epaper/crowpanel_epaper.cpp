@@ -8,7 +8,7 @@ namespace crowpanel_epaper {
 
 static const char *const TAG = "crowpanel_epaper";
 
-// Refresh sequences (shared by all models)
+// SSD1683 defaults; the UC8276C model overrides refresh_seq_()/sleep_seq_().
 static const uint8_t SEQ_REFRESH_FULL[] = {
     CMD_UPDATE_SEQ, 0x01, SEQ_FULL_UPDATE,
     CMD_DISPLAY_UPDATE, DELAY_BIT, 10,
@@ -104,8 +104,14 @@ void CrowPanelEPaper::spi_send_sequence_(const uint8_t *seq) {
 }
 
 bool CrowPanelEPaper::is_busy_() {
-  return busy_pin_ && busy_pin_->digital_read();
+  return busy_pin_ && busy_pin_->digital_read() == busy_level_();
 }
+
+const uint8_t *CrowPanelEPaper::refresh_seq_(bool full) const {
+  return full ? SEQ_REFRESH_FULL : SEQ_REFRESH_PARTIAL;
+}
+
+const uint8_t *CrowPanelEPaper::sleep_seq_() const { return SEQ_SLEEP; }
 
 // -- Lifecycle --------------------------------------------------------------
 void CrowPanelEPaper::setup() {
@@ -202,14 +208,15 @@ void CrowPanelEPaper::loop() {
       break;
 
     case State::UPDATE_REFRESH:
-      spi_send_sequence_(is_full_update_ ? SEQ_REFRESH_FULL : SEQ_REFRESH_PARTIAL);
+      spi_send_sequence_(refresh_seq_(is_full_update_));
       state_ = State::UPDATE_WAIT;
       state_start_ = millis();
       break;
 
     case State::UPDATE_WAIT:
       if (!is_busy_()) {
-        ESP_LOGD(TAG, "Refresh done");
+        ESP_LOGD(TAG, "%s refresh done in %u ms", is_full_update_ ? "Full" : "Partial",
+                 (unsigned) (now - state_start_));
         state_ = State::IDLE;
       } else if (now - state_start_ > REFRESH_TIMEOUT_MS) {
         ESP_LOGW(TAG, "Refresh timeout after %u ms", REFRESH_TIMEOUT_MS);
@@ -228,7 +235,7 @@ void CrowPanelEPaper::update() {
 }
 
 void CrowPanelEPaper::on_safe_shutdown() {
-  spi_send_sequence_(SEQ_SLEEP);
+  spi_send_sequence_(sleep_seq_());
   state_ = State::DEEP_SLEEP;
 }
 
@@ -282,7 +289,8 @@ void CrowPanelEPaper::draw_absolute_pixel_internal(int x, int y, Color color) {
     return;
 
   // Mirror X: bit 7 of each byte is the leftmost pixel
-  rx = native_width_() - 1 - rx;
+  if (mirror_x_())
+    rx = native_width_() - 1 - rx;
 
   uint32_t byte_off = ((uint32_t) ry * native_width_() + rx) / 8u;
   uint8_t bit = 7 - (rx % 8);
