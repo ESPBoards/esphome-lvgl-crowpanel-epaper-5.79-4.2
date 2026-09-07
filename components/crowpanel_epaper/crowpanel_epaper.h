@@ -5,6 +5,7 @@
 #include "esphome/components/display/display_buffer.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/version.h"
 
 namespace esphome {
 namespace crowpanel_epaper {
@@ -51,6 +52,7 @@ class CrowPanelEPaper : public display::DisplayBuffer {
 
   void set_full_update_every(uint32_t n) { full_update_every_ = n; }
   void set_invert_colors(bool inv)       { invert_colors_ = inv; }
+  // Only flags the next refresh; call update() after it to actually schedule one.
   void force_full_update()               { force_full_ = true; }
 
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
@@ -77,6 +79,17 @@ class CrowPanelEPaper : public display::DisplayBuffer {
   void spi_send_sequence_(const uint8_t *seq);
 
   bool is_busy_();
+
+  // LVGL's update_when_display_idle only draws while every display reports is_idle(), which
+  // stays false until disable_loop() is called - loop forever and LVGL stretches its refresh
+  // timer to five minutes. No-ops before 2025.12.0, which has neither piece.
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2025, 12, 0)
+  void park_loop_()   { this->disable_loop(); }
+  void unpark_loop_() { this->enable_loop(); }
+#else
+  void park_loop_()   {}
+  void unpark_loop_() {}
+#endif
 
   // Subclass hooks
   virtual void init_display_() = 0;

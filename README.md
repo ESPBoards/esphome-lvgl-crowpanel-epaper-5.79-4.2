@@ -44,11 +44,8 @@ box, the listing, or the outside of the case.
 
 Then set `model: "4.20in"` for V1.0, or `model: "4.20in-v1.2"` for V1.2.
 
-Elecrow's own example repo tells the two apart by a green circular sticker on
-the back of the board, and you will see that repeated elsewhere. Treat it as a
-hint at best - v1.2 boards also ship without the sticker. If you are buying now
-you will most likely get a v1.2, so if `4.20in` comes up blank or garbled, try
-`4.20in-v1.2`.
+If you are buying now you will most likely get a v1.2, so if `4.20in` comes up
+blank or garbled, try `4.20in-v1.2`.
 
 ## Setup
 
@@ -120,6 +117,20 @@ lvgl:
   color_depth: 16
   on_draw_end:
     component.update: epd
+```
+
+### Letting LVGL wait for the panel
+
+ESPHome 2025.12.0+ only. `update_when_display_idle` stops LVGL rendering while the panel
+is mid-refresh - worth it on e-paper, where a refresh takes about a second and anything
+drawn during it is wasted. Use it *instead of* `on_draw_end`; LVGL calls
+`component.update` for you when it is on.
+
+```yaml
+lvgl:
+  displays: epd
+  buffer_size: 25%
+  update_when_display_idle: true
 ```
 
 ## Options

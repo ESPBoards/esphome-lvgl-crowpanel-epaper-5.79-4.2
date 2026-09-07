@@ -185,6 +185,8 @@ void CrowPanelEPaper::loop() {
                  is_full_update_ ? "Full" : "Partial", update_count_);
         state_ = State::UPDATE_PREPARE;
         state_start_ = now;
+      } else {
+        park_loop_();
       }
       break;
 
@@ -225,6 +227,8 @@ void CrowPanelEPaper::loop() {
       break;
 
     case State::DEEP_SLEEP:
+      // Terminal until reboot - nothing left to poll for.
+      park_loop_();
       break;
   }
 }
@@ -232,6 +236,7 @@ void CrowPanelEPaper::loop() {
 void CrowPanelEPaper::update() {
   do_update_();
   needs_update_ = true;
+  unpark_loop_();
 }
 
 void CrowPanelEPaper::on_safe_shutdown() {
